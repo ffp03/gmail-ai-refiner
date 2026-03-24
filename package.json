@@ -1,0 +1,17 @@
+{
+  "name": "gmail-ai-refiner",
+  "version": "1.0.0",
+  "description": "Inline AI-powered email refinement",
+  "type": "module",
+  "scripts": {
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "clearMocks": true
+  }
+}

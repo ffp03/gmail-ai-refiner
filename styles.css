@@ -1,0 +1,124 @@
+/* Gmail AI Refiner — Inline Suggestion Panel */
+
+.gar-panel {
+  display: none;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 0;
+  border: 1px solid #e0e0e0;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #fafafa;
+  font-family: 'Google Sans', Roboto, sans-serif;
+  font-size: 13px;
+  color: #3c4043;
+  overflow: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.gar-panel.gar-visible {
+  display: block;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Header bar */
+.gar-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #f1f3f4;
+  border-bottom: 1px solid #e0e0e0;
+  font-size: 11px;
+  color: #5f6368;
+}
+
+.gar-icon {
+  font-size: 10px;
+  color: #1a73e8;
+}
+
+.gar-label {
+  font-weight: 600;
+  color: #1a73e8;
+  letter-spacing: 0.02em;
+}
+
+.gar-shortcuts {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: #80868b;
+}
+
+.gar-shortcuts kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid #dadce0;
+  border-radius: 3px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 10px;
+  color: #3c4043;
+}
+
+/* Loading spinner */
+.gar-spinner {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #dadce0;
+  border-top-color: #1a73e8;
+  border-radius: 50%;
+  animation: gar-spin 0.7s linear infinite;
+  margin-left: 4px;
+}
+
+.gar-loading .gar-spinner {
+  display: block;
+}
+
+.gar-loading .gar-shortcuts {
+  display: none;
+}
+
+@keyframes gar-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Body — the suggested text */
+.gar-body {
+  padding: 10px 14px;
+  line-height: 1.55;
+  color: #3c4043;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 20px;
+}
+
+.gar-loading .gar-body {
+  display: none;
+}
+
+/* Error state */
+.gar-panel.gar-err .gar-body {
+  color: #c5221f;
+  font-style: italic;
+}
+
+.gar-panel.gar-err .gar-icon {
+  color: #c5221f;
+}
+
+.gar-panel.gar-err .gar-label {
+  color: #c5221f;
+}
+
+/* Ready state — slight highlight to invite acceptance */
+.gar-panel.gar-ready .gar-body {
+  color: #1a1a1a;
+}

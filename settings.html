@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gmail AI Refiner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f0f11;
+      --surface:  #1a1a1f;
+      --border:   #2a2a32;
+      --accent:   #5b8dee;
+      --accent-dim: rgba(91,141,238,0.12);
+      --text:     #e8e8ed;
+      --muted:    #6e6e7e;
+      --success:  #4caf7d;
+      --danger:   #e05252;
+      --radius:   10px;
+    }
+
+    body {
+      width: 340px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 20px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .logo {
+      width: 32px;
+      height: 32px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .header-text h1 {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .header-text p {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── Toggle ── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+    }
+
+    .toggle-row span {
+      font-weight: 500;
+    }
+
+    .switch {
+      position: relative;
+      width: 36px;
+      height: 20px;
+    }
+
+    .switch input { display: none; }
+
+    .switch-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .switch-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+      pointer-events: none;
+    }
+
+    .switch input:checked ~ .switch-track { background: var(--accent); }
+    .switch input:checked ~ .switch-thumb { transform: translateX(16px); }
+
+    /* ── Form ── */
+    .field {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    input[type="password"],
+    input[type="text"],
+    select,
+    textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      padding: 10px 12px;
+      outline: none;
+      resize: vertical;
+      transition: border-color 0.15s;
+    }
+
+    input[type="password"]:focus,
+    input[type="text"]:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+    }
+
+    input[type="password"]::placeholder,
+    textarea::placeholder {
+      color: var(--muted);
+    }
+
+    textarea {
+      height: 110px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .btn-save {
+      flex: 1;
+      padding: 10px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .btn-save:hover { opacity: 0.88; }
+    .btn-save:active { transform: scale(0.98); }
+
+    /* ── Status toast ── */
+    .status {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 0;
+      min-height: 18px;
+      transition: opacity 0.2s;
+    }
+
+    .status.ok  { color: var(--success); }
+    .status.err { color: var(--danger); }
+
+    /* ── Hint ── */
+    .hint {
+      margin-top: 16px;
+      padding: 10px 12px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(91,141,238,0.2);
+      border-radius: var(--radius);
+      font-size: 11px;
+      color: #8baee8;
+      line-height: 1.6;
+    }
+
+    .hint strong { color: var(--accent); }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="logo">✦</div>
+    <div class="header-text">
+      <h1>Gmail AI Refiner</h1>
+      <p>Inline suggestions as you draft</p>
+    </div>
+  </div>
+
+  <div class="toggle-row">
+    <span>Enable AI Refiner</span>
+    <label class="switch">
+      <input type="checkbox" id="enabledToggle" checked>
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
+  </div>
+
+  <div class="toggle-row">
+    <span>Developer Debug Logging</span>
+    <label class="switch">
+      <input type="checkbox" id="debugToggle">
+      <div class="switch-track"></div>
+      <div class="switch-thumb"></div>
+    </label>
+  </div>
+
+  <div class="field">
+    <label for="triggerMode">Trigger Mode</label>
+    <select id="triggerMode">
+      <option value="shortcut">Shortcut (Ctrl+Space)</option>
+      <option value="auto">Auto (Pause typing)</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="provider">AI Provider</label>
+    <select id="provider">
+      <option value="anthropic">Anthropic (Claude 3.7 Sonnet)</option>
+      <option value="gemini">Google Gemini (Flash 3.0 Preview)</option>
+      <option value="deepseek">DeepSeek (DeepSeek Chat)</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="apiKey">API Key</label>
+    <input type="password" id="apiKey" placeholder="sk-ant-api03-…" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="field">
+    <label for="systemPrompt">System Prompt</label>
+    <textarea id="systemPrompt" placeholder="Act as my professional executive assistant. Improve grammar, flow, and readability while maintaining my intention. Meaningfully fill in missing logic, smooth out transitions, and add standard professional pleasantries..."></textarea>
+  </div>
+
+  <div class="footer">
+    <button class="btn-test" id="testBtn">Test Connection</button>
+    <button class="btn-save" id="saveBtn">Save Settings</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <div class="hint">
+    <strong>How to use:</strong> Open a Gmail compose window. Depending on your Trigger Mode, either pause typing or press <strong>Ctrl+Space</strong> to see a refined suggestion.<br>
+    Press <strong>Tab</strong> to accept · <strong>Esc</strong> to dismiss.
+  </div>
+
+  <style>
+    .btn-test {
+      flex: 1;
+      padding: 10px;
+      background: #333;
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    .btn-test:hover { background: #444; }
+  </style>
+
+  <script src="settings.js" type="module"></script>
+</body>
+</html>
