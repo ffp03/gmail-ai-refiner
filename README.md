@@ -7,7 +7,7 @@ Gmail AI Refiner is a powerful Chrome extension that integrates state-of-the-art
 - **Inline Suggestions**: Get real-time AI refinements as you type or on demand.
 - **Multiple Providers**: Support for Anthropic (Claude 3.7 Sonnet), Google Gemini (2.0 Flash), and DeepSeek.
 - **Flexible Triggering**:
-  - **Auto-Refine**: Automatically suggests improvements after a brief pause in typing.
+  - **Auto-Refine**: Automatically suggests improvements after a brief pause in typing (1.8 seconds of idle time) once the draft reaches at least 20 characters.
   - **Manual Trigger**: Use `Ctrl + Space` to request a refinement whenever you're ready.
 - **Seamless Integration**: Use `Tab` to accept suggestions and `Esc` to dismiss them.
 - **Customizable**: Set your own system prompts and preferred AI provider in the extension settings.
@@ -32,7 +32,7 @@ Gmail AI Refiner is a powerful Chrome extension that integrates state-of-the-art
 
 1. Open Gmail and click **Compose**.
 2. Start typing your email draft.
-3. If using **Auto Mode**, wait for the "AI Suggestion" panel to appear below the compose box.
+3. If using **Auto Mode**, wait for the "AI Suggestion" panel to appear (requires at least 20 characters and 1.8s of idle typing).
 4. If using **Shortcut Mode**, press `Ctrl + Space` to trigger a refinement.
 5. Press `Tab` to replace your draft with the AI suggestion, or `Esc` to keep your original text.
 

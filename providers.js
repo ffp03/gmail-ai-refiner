@@ -78,7 +78,7 @@ export const PROVIDERS = {
 
   gemini: {
     name: 'Google Gemini',
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent',
     keyPrefix: null,
     buildEndpoint: (endpoint, apiKey) => `${endpoint}?key=${apiKey}`,
     buildHeaders: () => ({
