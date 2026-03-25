@@ -5,7 +5,7 @@ Gmail AI Refiner is a powerful Chrome extension that integrates state-of-the-art
 ## Features
 
 - **Inline Suggestions**: Get real-time AI refinements as you type or on demand.
-- **Multiple Providers**: Support for Anthropic (Claude 3.7 Sonnet), Google Gemini (2.0 Flash), and DeepSeek.
+- **Multiple Providers**: Support for Anthropic (Claude 3.7 Sonnet), Google Gemini (3 Flash Preview), and DeepSeek.
 - **Flexible Triggering**:
   - **Auto-Refine**: Automatically suggests improvements after a brief pause in typing (1.8 seconds of idle time) once the draft reaches at least 20 characters.
   - **Manual Trigger**: Use `Ctrl + Space` to request a refinement whenever you're ready.
