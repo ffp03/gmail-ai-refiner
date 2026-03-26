@@ -1,13 +1,43 @@
 // content.js — Gmail AI Refiner
-// Watches for compose windows, triggers AI refinement, shows inline suggestion
+console.log('[GAR] Content script loaded');
 
-console.log('[GAR] Content script injected');
+const DEBOUNCE_MS = 1800;
+const AUTO_MIN_CHARS = 20;
+const uiMap = new WeakMap(); // Maps compose boxes to their UI controllers
 
-const DEBOUNCE_MS = 1800;       // ms of idle typing before triggering
-const AUTO_MIN_CHARS = 20;      // minimum draft length to trigger auto string
-const attachedBoxes = new WeakSet();
+// ─── Constants & Selectors ───────────────────────────────────────────────────
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
+const COMPOSE_SELECTORS = [
+  'div[aria-label="Message Body"]',
+  'div[aria-label="Compose email"]',
+  'div[g_editable="true"]',
+  'div[contenteditable="true"][aria-multiline="true"]',
+  '.Am.Al.editable' // Gmail's common classes
+];
+
+// ─── Utilities ───────────────────────────────────────────────────────────────
+
+function getSettings() {
+  if (!chrome.runtime?.id) {
+    console.warn('[GAR] Extension context invalidated. Please refresh Gmail.');
+    return Promise.resolve({ enabled: false });
+  }
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.get({
+        apiKey: '',
+        systemPrompt: '',
+        enabled: true,
+        debug: false,
+        provider: 'anthropic',
+        triggerMode: 'shortcut'
+      }, resolve);
+    } catch (e) {
+      console.error('[GAR] Failed to get settings:', e);
+      resolve({ enabled: false });
+    }
+  });
+}
 
 function debounce(fn, ms) {
   let timer;
@@ -17,221 +47,259 @@ function debounce(fn, ms) {
   };
 }
 
-function getSettings() {
-  return new Promise(resolve =>
-    chrome.storage.local.get({
-      apiKey: '',
-      systemPrompt: '',
-      enabled: true,
-      debug: false,
-      provider: 'anthropic',
-      triggerMode: 'shortcut'
-    }, resolve)
-  );
+function findActiveComposeBox() {
+  const active = document.activeElement;
+  if (!active) return null;
+  for (const sel of COMPOSE_SELECTORS) {
+    const match = active.closest(sel) || (active.matches(sel) ? active : null);
+    if (match) return match;
+  }
+  return null;
 }
 
-function plainText(el) {
-  // Preserve line breaks from Gmail's contenteditable structure
-  return el.innerText.trim();
+function getDraftAndContext(composeBox) {
+  const quoteEl = composeBox.querySelector('.gmail_quote');
+  
+  // Try to find the trimmed content button inside or near the compose box
+  let trimmedBtn = composeBox.querySelector('div[aria-label="Show trimmed content"], .gj');
+  if (!trimmedBtn) {
+    // Look in the broader compose window container
+    // Gmail uses many container classes; searching nearby ancestors is safest.
+    const container = composeBox.closest('.M9, .ip, .AD, .nH, [role="main"]');
+    trimmedBtn = container?.querySelector('div[aria-label="Show trimmed content"], .gj');
+  }
+  
+  // Last resort: search document-wide if only one compose is active
+  if (!trimmedBtn) {
+    const btns = Array.from(document.querySelectorAll('div[aria-label="Show trimmed content"], .gj'));
+    if (btns.length === 1) trimmedBtn = btns[0];
+  }
+  
+  let draft = '';
+  let context = '';
+  let senderName = '';
+  let recipientName = '';
+
+  if (quoteEl) {
+    const clone = composeBox.cloneNode(true);
+    const q = clone.querySelector('.gmail_quote');
+    const b = clone.querySelector('div[aria-label="Show trimmed content"], .gj');
+    const attr = q?.querySelector('.gmail_attr'); // e.g. "On Wed, ..."
+    
+    if (attr) {
+      // Try to extract name from "Sender <email> wrote:"
+      const match = attr.innerText.match(/On .+, (.+?) <.+> wrote:/);
+      if (match) senderName = match[1];
+    }
+    
+    if (q) {
+      context = q.innerText.trim();
+      q.remove();
+    }
+    if (b) b.remove();
+    
+    draft = clone.innerText.trim();
+  } else if (trimmedBtn) {
+    // It's a folded reply. Draft is just the box content.
+    draft = composeBox.innerText.trim();
+    // Try to get context from the last thread message
+    const res = findLastMessageInThread();
+    context = res.context;
+    senderName = res.senderName;
+    recipientName = res.recipientName;
+  } else {
+    // Probably a new email or unfolded without a clear .gmail_quote (unlikely for replies)
+    draft = composeBox.innerText.trim();
+  }
+  
+  return { draft, context, senderName, recipientName };
 }
 
-// ─── Suggestion Panel ─────────────────────────────────────────────────────────
+function findLastMessageInThread() {
+  // Gmail thread messages are marked with role="listitem" or classes like 'adn'
+  const messages = Array.from(document.querySelectorAll('div[role="listitem"], div.adn, .aeu'));
+  if (messages.length > 0) {
+    // The last message in the list is usually the one being replied to
+    const lastMsg = messages[messages.length - 1];
+    
+    // Extract sender name if possible
+    const senderEl = lastMsg.querySelector('span[email], .gD, .zF');
+    const senderName = senderEl ? (senderEl.getAttribute('name') || senderEl.innerText.trim()) : 'Sender';
 
-function createPanel() {
+    // Extract recipient name if possible
+    const recipientEl = lastMsg.querySelector('.hb'); // Common for recipient list
+    const recipientName = recipientEl ? recipientEl.innerText.trim() : 'Receiver';
+
+    // Attempt to get the actual message body, avoiding headers/signatures
+    const body = lastMsg.querySelector('div[dir="ltr"], .a3s, .ii.gt') || lastMsg;
+    return { context: body.innerText.trim(), senderName, recipientName };
+  }
+  return { context: '', senderName: '', recipientName: '' };
+}
+
+// ─── UI Factory ──────────────────────────────────────────────────────────────
+
+function attachUI(composeBox) {
+  if (uiMap.has(composeBox)) return uiMap.get(composeBox);
+
+  console.log('[GAR] Attaching UI to box:', composeBox.getAttribute('aria-label') || 'unlabeled');
+  
   const panel = document.createElement('div');
   panel.className = 'gar-panel';
   panel.innerHTML = `
     <div class="gar-header">
       <span class="gar-icon">✦</span>
       <span class="gar-label">AI Suggestion</span>
-      <span class="gar-shortcuts">
-        <kbd>Tab</kbd> accept &nbsp;·&nbsp; <kbd>Esc</kbd> dismiss
-      </span>
+      <span class="gar-shortcuts"><kbd>Tab</kbd> accept · <kbd>Esc</kbd> dismiss</span>
       <span class="gar-spinner" aria-hidden="true"></span>
     </div>
     <div class="gar-body"></div>
   `;
-  return panel;
-}
-
-// ─── Core: attach to a compose box ───────────────────────────────────────────
-
-function attachToCompose(composeBox) {
-  if (attachedBoxes.has(composeBox)) return;
-  attachedBoxes.add(composeBox);
+  
+  // Insert below the compose area
+  composeBox.parentNode.insertBefore(panel, composeBox.nextSibling);
   composeBox.setAttribute('data-gar-attached', 'true');
 
-  // Inject panel as next sibling of compose box
-  const panel   = createPanel();
-  const bodyEl  = panel.querySelector('.gar-body');
-  const spinner = panel.querySelector('.gar-spinner');
-
-  // Insert right below the compose area
-  composeBox.parentNode.insertBefore(panel, composeBox.nextSibling);
-
+  const bodyEl = panel.querySelector('.gar-body');
   let currentSuggestion = '';
 
-  // ── State helpers ──
-  function hide() {
+  const hide = () => {
     panel.classList.remove('gar-visible', 'gar-loading', 'gar-ready', 'gar-err');
     currentSuggestion = '';
-  }
+  };
 
-  function showLoading() {
+  const showLoading = () => {
     bodyEl.textContent = '';
     panel.classList.remove('gar-ready', 'gar-err');
     panel.classList.add('gar-visible', 'gar-loading');
-  }
+  };
 
-  function showReady(text) {
+  const showReady = (text) => {
     currentSuggestion = text;
     bodyEl.textContent = text;
     panel.classList.remove('gar-loading', 'gar-err');
     panel.classList.add('gar-visible', 'gar-ready');
-  }
+  };
 
-  function showError(msg) {
+  const showError = (msg) => {
     bodyEl.textContent = msg;
     panel.classList.remove('gar-loading', 'gar-ready');
     panel.classList.add('gar-visible', 'gar-err');
-  }
+  };
 
-  // ── Trigger refinement ──
   const executeRefinement = async (isManual = false) => {
-    const draft = plainText(composeBox);
-    
-    // Always ignore completely empty drafts, and enforce the auto limit for non-manual triggers
+    const { draft, context, senderName, recipientName } = getDraftAndContext(composeBox);
     if (draft.length === 0) return hide();
     if (!isManual && draft.length < AUTO_MIN_CHARS) return hide();
 
     const { apiKey, systemPrompt, enabled, debug, provider } = await getSettings();
-    if (enabled === false) return hide();
-
-    if (!apiKey) {
-      showError('⚙ Add your API key in extension settings');
-      return;
-    }
+    if (!enabled) return hide();
+    if (!apiKey) return showError('⚙ Add API Key in extension settings');
 
     if (debug) {
-      console.log('--- Gmail AI Refiner [DEBUG] ---');
-      console.log('Provider:', provider);
-      console.log('Draft length:', draft.length);
-      console.log('Draft text:', draft);
-      console.log('System Prompt override:', systemPrompt ? 'Yes' : 'No');
+      console.log('--- [GAR] Extraction Results ---');
+      console.log('User Draft:', draft);
+      console.log('Previous Context:', context || '(No context found)');
+      console.log('Context Sender:', senderName || '(Unknown)');
+      console.log('Context Recipient:', recipientName || '(Unknown)');
+      console.log('-------------------------------');
     }
-
+    
     showLoading();
-    const startTime = Date.now();
-
-    chrome.runtime.sendMessage(
-      { type: 'REFINE_EMAIL', draft, systemPrompt, apiKey, provider },
-      (response) => {
-        const latency = Date.now() - startTime;
-        
-        if (chrome.runtime.lastError) {
-          console.error('[GAR] Runtime message error:', chrome.runtime.lastError);
-          showError('⚠️ Extension background process failed to respond. Try reloading the extension.');
-          return;
-        }
-
-        if (debug) {
-          console.log('[GAR] Response received in', latency, 'ms');
-          console.log('[GAR] Success:', response?.success);
-          if (response?.success) console.log('[GAR] Refined text:', response.refined);
-          if (!response?.success) console.error('[GAR] Error:', response.error);
-        }
-
-        if (response?.success) {
-          const result = response.refined;
-          const bodyText = (typeof result === 'object') ? result.body : result;
-          
-          if (debug && typeof result === 'object') {
-            console.log('[GAR] Structured response received:');
-            console.log('  - Subject:', result.subject);
-            console.log('  - Signature (Discarded):', result.signature);
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'REFINE_EMAIL', draft, context, senderName, recipientName, systemPrompt, apiKey, provider },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            showError('⚠️ Context invalidated. Refresh Gmail tab.');
+            return;
           }
-
-          showReady(bodyText);
-        } else {
-          showError(`API Error: ${response?.error || 'Unknown error'}`);
+          if (response.success) {
+            if (debug && response.rawRequestBody) {
+              console.log('--- [GAR] Raw LLM Input ---');
+              console.log(JSON.stringify(response.rawRequestBody, null, 2));
+              console.log('---------------------------');
+            }
+            const res = response.refined;
+            const refinedBody = (typeof res === 'object') ? (res.body || res.refined_email) : res;
+            if (debug && typeof res === 'object') console.log('[GAR] Discarded signature:', res.signature);
+            showReady(refinedBody);
+          } else {
+            showError(response.error);
+          }
         }
-      }
-    );
-  };
-  
-  const triggerRefine = debounce(() => executeRefinement(false), DEBOUNCE_MS);
-
-  // ── Keyboard handler (Triggering & Accepting) ──
-  composeBox.addEventListener('keydown', async (e) => {
-    // 1. Check for manual trigger (Ctrl+Space)
-    if (e.ctrlKey && (e.code === 'Space' || e.key === ' ')) {
-      console.log('[GAR] Ctrl+Space detected');
-      e.preventDefault();
-      e.stopPropagation();
-      
-      const { enabled, triggerMode } = await getSettings();
-      if (enabled && triggerMode === 'shortcut') {
-        console.log('[GAR] Triggering refinement');
-        executeRefinement(true);
-      }
-      return;
+      );
+    } catch (e) {
+      showError('⚠️ Extension reloaded. Please refresh the page.');
     }
+  };
 
-    // 2. Check for panel interaction (Tab / Esc)
-    if (!panel.classList.contains('gar-ready')) return;
+  const triggerAuto = debounce(() => executeRefinement(false), DEBOUNCE_MS);
 
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // Replace compose content with suggestion
+  const controller = {
+    executeRefinement,
+    triggerAuto,
+    accept: () => {
+      if (!currentSuggestion) return;
       composeBox.focus();
       document.execCommand('selectAll', false, null);
       document.execCommand('insertText', false, currentSuggestion);
-
-      // Move cursor to end
-      const range = document.createRange();
-      range.selectNodeContents(composeBox);
-      range.collapse(false);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-
       hide();
+    },
+    dismiss: hide
+  };
 
-    } else if (e.key === 'Escape') {
-      hide();
-    }
-  }, true); // Use capture phase so we get the event before Gmail swallows it
-
-  // ── Input: watch for typing, trigger auto-refinement if enabled ──
-  composeBox.addEventListener('input', async () => {
-    const text = plainText(composeBox);
-    if (text.length < AUTO_MIN_CHARS) {
-      hide();
-      return;
-    } 
-
-    const { triggerMode, enabled } = await getSettings();
-    if (!enabled || triggerMode !== 'auto') return;
-
-    // Show a subtle "pending" state while debounce ticks
-    if (!panel.classList.contains('gar-loading')) {
-      panel.classList.add('gar-visible', 'gar-pending');
-    }
-    triggerRefine();
-  });
+  uiMap.set(composeBox, controller);
+  return controller;
 }
 
-// ─── Observer: watch for new compose windows ─────────────────────────────────
+// ─── Listeners ───────────────────────────────────────────────────────────────
 
+// 1. Unified Document Listener for Shortcut & Panel Interaction
+document.addEventListener('keydown', async (e) => {
+  const isShortcut = e.ctrlKey && (e.code === 'Space' || e.key === ' ');
+  const isTab = e.key === 'Tab';
+  const isEsc = e.key === 'Escape';
+
+  if (!isShortcut && !isTab && !isEsc) return;
+
+  const box = findActiveComposeBox();
+  if (!box) return;
+
+  const ui = attachUI(box);
+
+  if (isShortcut) {
+    console.log('[GAR] Ctrl+Space shortcut detected');
+    e.preventDefault();
+    e.stopPropagation();
+    const { enabled, triggerMode } = await getSettings();
+    if (enabled && triggerMode === 'shortcut') ui.executeRefinement(true);
+  } else if (isTab || isEsc) {
+    // Check if panel is showing a suggestion
+    const panel = box.nextSibling;
+    if (panel && panel.classList.contains('gar-ready')) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isTab) ui.accept();
+      else ui.dismiss();
+    }
+  }
+}, true); // Use capture phase to intercept Tab/Esc from Gmail
+
+// 2. Observer & Input (for Auto-Refine)
 const observer = new MutationObserver(() => {
-  document.querySelectorAll('div[aria-label="Message Body"]')
-    .forEach(attachToCompose);
+  const box = findActiveComposeBox();
+  if (box) attachUI(box);
 });
-
 observer.observe(document.body, { childList: true, subtree: true });
 
-// Initial scan (for compose windows already open on load)
-document.querySelectorAll('div[aria-label="Message Body"]')
-  .forEach(attachToCompose);
+document.addEventListener('input', async (e) => {
+  const box = findActiveComposeBox();
+  if (!box) return;
+  
+  const { enabled, triggerMode } = await getSettings();
+  if (!enabled || triggerMode !== 'auto') return;
+
+  const ui = attachUI(box);
+  ui.triggerAuto();
+});

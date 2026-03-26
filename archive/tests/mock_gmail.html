@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gmail Mock Test</title>
+    <style>
+        .editable { border: 1px solid #ccc; padding: 10px; margin: 10px; min-height: 50px; }
+        .gmail_quote { color: #555; border-left: 1px solid #ccc; margin: 5px 0 5px 0.8ex; padding-left: 1ex; }
+        .gj { background: #eee; cursor: pointer; padding: 2px 5px; display: inline-block; }
+    </style>
+</head>
+<body>
+  <h1>Gmail Mock Scenarios</h1>
+
+  <section>
+    <h3>1. Unfolded Reply (Has gmail_quote)</h3>
+    <div id="test-unfolded" class="Am Al editable" aria-label="Message Body" contenteditable="true">
+      Hello, I would like to follow up on our last meeting.
+      <div class="gmail_quote">
+        <div class="gmail_attr">On Wed, Mar 25, 2026 at 3:31 PM Sender <sender@example.com> wrote:</div>
+        <blockquote class="gmail_quote">
+          Dear Receiver, let's meet on Friday.
+        </blockquote>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h3>2. Folded Reply (Trimmed Content Button)</h3>
+    <div id="test-folded" class="Am Al editable" aria-label="Message Body" contenteditable="true">
+      My response when it was folded.
+      <div class="gj" aria-label="Show trimmed content">...</div>
+    </div>
+    <!-- Previous thread message -->
+    <div role="main">
+      <div role="listitem">Thread Subject: Meeting Follow-up</div>
+      <div role="listitem">Previous Message Content: "Can we talk about the project budget?"</div>
+    </div>
+  </section>
+
+  <section>
+    <h3>3. New Compose (No Quote)</h3>
+    <div id="test-new" class="Am Al editable" aria-label="Message Body" contenteditable="true">
+      Just starting a fresh thread here.
+    </div>
+  </section>
+
+  <section>
+    <h3>4. Folded with Quoted Content (Alternate Structure)</h3>
+    <div id="test-folded-alt" class="Am Al editable" aria-label="Message Body" contenteditable="true">
+      Reply with hidden quote.
+      <div class="gmail_quote" style="display:none">
+          I'm hidden but in the DOM.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h3>5. Real Gmail Complex Structure (Folded)</h3>
+    <table class="cf An">
+      <tbody>
+        <tr>
+          <td class="Ap">
+            <div class="Ar Au">
+              <div class="aO7">
+                <!-- Our Compose Box -->
+                <div id="test-real-complex" class="Am aiL aO9 Al editable" aria-label="Message Body" contenteditable="true">
+                  sound good.
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <!-- Sibling/External button -->
+    <div id="real-trimmed-btn" class="ajR" role="button" aria-label="Show trimmed content" data-tooltip="Show trimmed content">...</div>
+    
+    <!-- Thread messages -->
+    <div role="listitem">
+      <div dir="ltr">This is the previous message in the real thread.</div>
+    </div>
+  </section>
+
+</body>
+</html>

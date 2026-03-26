@@ -4,6 +4,9 @@ Gmail AI Refiner is a powerful Chrome extension that integrates state-of-the-art
 
 ## Features
 
+- **Smart Context**: Automatically separates your new draft from the sender's previous email context in replies.
+- **Folded Email Support**: Accurately retrieves context even when the previous email is folded (hidden behind the three dots) in Gmail.
+- **Clear Participant Labeling**: Labels both the sender and recipient in the AI prompt to provide better conversation grounding.
 - **Inline Suggestions**: Get real-time AI refinements as you type or on demand.
 - **Multiple Providers**: Support for Anthropic (Claude 3.7 Sonnet), Google Gemini (3 Flash Preview), and DeepSeek.
 - **Flexible Triggering**:

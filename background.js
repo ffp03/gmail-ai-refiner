@@ -4,8 +4,8 @@ console.log('[GAR-BG] Service Worker loaded');
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'REFINE_EMAIL') {
-    refineEmail(message.draft, message.systemPrompt, message.apiKey, message.provider)
-      .then(refined => sendResponse({ success: true, refined }))
+    refineEmail(message.draft, message.systemPrompt, message.apiKey, message.provider, message.context, message.senderName, message.recipientName)
+      .then(({ result, rawRequestBody }) => sendResponse({ success: true, refined: result, rawRequestBody }))
       .catch(err => {
         console.error('[GAR-BG] Refinement failed:', err);
         sendResponse({ success: false, error: err.message });
@@ -14,7 +14,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-async function refineEmail(draft, systemPrompt, apiKey, providerId = 'anthropic') {
+async function refineEmail(draft, systemPrompt, apiKey, providerId = 'anthropic', context = '', senderName = '', recipientName = '') {
   console.log(`[GAR-BG] Starting refinement with provider: ${providerId}`);
   const provider = PROVIDERS[providerId];
   if (!provider) {
@@ -23,8 +23,9 @@ async function refineEmail(draft, systemPrompt, apiKey, providerId = 'anthropic'
 
   const endpoint = provider.buildEndpoint ? provider.buildEndpoint(provider.endpoint, apiKey) : provider.endpoint;
   const headers = provider.buildHeaders(apiKey);
-  const body = provider.buildBody(draft, systemPrompt);
+  const body = provider.buildBody(draft, systemPrompt, context, senderName, recipientName);
 
+  console.log(`[GAR-BG] Full Request Body:`, JSON.stringify(body, null, 2));
   console.log(`[GAR-BG] Fetching from: ${endpoint}`);
   
   const controller = new AbortController();
@@ -51,10 +52,10 @@ async function refineEmail(draft, systemPrompt, apiKey, providerId = 'anthropic'
     }
 
     const data = await response.json();
-    console.log(`[GAR-BG] Data received:`, JSON.stringify(data, null, 2));
+    console.log(`[GAR-BG] Raw API Response:`, JSON.stringify(data, null, 2));
     const result = provider.extractText(data);
-    console.log(`[GAR-BG] Extracted text:`, result);
-    return result;
+    console.log(`[GAR-BG] Final Extracted Result:`, JSON.stringify(result, null, 2));
+    return { result, rawRequestBody: body };
   } catch (error) {
     console.error(`[GAR-BG] Fetch error:`, error);
     throw error;

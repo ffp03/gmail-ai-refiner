@@ -56,12 +56,27 @@ export const PROVIDERS = {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01'
     }),
-    buildBody: (draft, systemPrompt) => ({
+    buildBody: (draft, systemPrompt, context, senderName, recipientName) => ({
       model: 'claude-3-7-sonnet-latest',
       max_tokens: 2000,
       system: enforceJsonRules(systemPrompt),
       messages: [
-        { role: 'user', content: `Refine this email draft and return JSON:\n\n${draft}` },
+        { 
+          role: 'user', 
+          content: `--- PREVIOUS EMAIL ---
+FROM: ${senderName || 'Sender'}
+TO: ${recipientName || 'Receiver'}
+CONTENT:
+${context || '(No content found)'}
+
+--- MY NEW DRAFT (TO BE REFINED) ---
+FROM: Me
+TO: ${senderName || 'Recipient'}
+CONTENT:
+${draft}
+
+Refine my draft based on the context above and return JSON.` 
+        },
         // Pre-fill assistant response to force JSON
         { role: 'assistant', content: '{' }
       ]
@@ -84,12 +99,24 @@ export const PROVIDERS = {
     buildHeaders: () => ({
       'Content-Type': 'application/json'
     }),
-    buildBody: (draft, systemPrompt) => ({
+    buildBody: (draft, systemPrompt, context, senderName, recipientName) => ({
       system_instruction: {
         parts: [{ text: enforceJsonRules(systemPrompt) }]
       },
       contents: [{
-        parts: [{ text: `Refine this email draft and return JSON:\n\n${draft}` }]
+        parts: [{ text: `--- PREVIOUS EMAIL ---
+FROM: ${senderName || 'Sender'}
+TO: ${recipientName || 'Receiver'}
+CONTENT:
+${context || '(No content found)'}
+
+--- MY NEW DRAFT (TO BE REFINED) ---
+FROM: Me
+TO: ${senderName || 'Recipient'}
+CONTENT:
+${draft}
+
+Refine my draft based on the context above and return JSON.` }]
       }],
       generationConfig: {
         temperature: 0.2, // Lower temp for strict JSON adherence
@@ -113,12 +140,27 @@ export const PROVIDERS = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
     }),
-    buildBody: (draft, systemPrompt) => ({
+    buildBody: (draft, systemPrompt, context, senderName, recipientName) => ({
       model: 'deepseek-chat',
       response_format: { type: 'json_object' }, // Enforce JSON mode
       messages: [
         { role: 'system', content: enforceJsonRules(systemPrompt) },
-        { role: 'user', content: `Refine this email draft and return JSON:\n\n${draft}` }
+        { 
+          role: 'user', 
+          content: `--- PREVIOUS EMAIL ---
+FROM: ${senderName || 'Sender'}
+TO: ${recipientName || 'Receiver'}
+CONTENT:
+${context || '(No content found)'}
+
+--- MY NEW DRAFT (TO BE REFINED) ---
+FROM: Me
+TO: ${senderName || 'Recipient'}
+CONTENT:
+${draft}
+
+Refine my draft based on the context above and return JSON.` 
+        }
       ],
       temperature: 0.1
     }),
