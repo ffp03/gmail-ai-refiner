@@ -242,8 +242,32 @@ function attachUI(composeBox) {
     accept: () => {
       if (!currentSuggestion) return;
       composeBox.focus();
-      document.execCommand('selectAll', false, null);
-      document.execCommand('insertText', false, currentSuggestion);
+
+      const quoteEl = composeBox.querySelector('.gmail_quote');
+      if (quoteEl) {
+        // ── Targeted replacement: only overwrite nodes BEFORE the gmail_quote ──
+        // Collect all direct child nodes that precede the quote block
+        const nodesToRemove = [];
+        for (const node of composeBox.childNodes) {
+          if (node === quoteEl) break;
+          nodesToRemove.push(node);
+        }
+        // Remove them
+        nodesToRemove.forEach(n => n.remove());
+        // Insert the refined text as a new <div> before the quote
+        const newDiv = document.createElement('div');
+        newDiv.textContent = currentSuggestion;
+        composeBox.insertBefore(newDiv, quoteEl);
+        // Add a blank line between draft and quote for readability
+        const spacer = document.createElement('div');
+        spacer.innerHTML = '<br>';
+        composeBox.insertBefore(spacer, quoteEl);
+      } else {
+        // No quoted section — safe to replace everything
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, currentSuggestion);
+      }
+
       hide();
     },
     dismiss: hide
