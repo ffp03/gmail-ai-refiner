@@ -26,7 +26,9 @@ function getSettings() {
     try {
       chrome.storage.local.get({
         apiKey: '',
-        systemPrompt: '',
+        systemPrompt1: '',
+        systemPrompt2: '',
+        systemPrompt3: '',
         enabled: true,
         debug: false,
         provider: 'anthropic',
@@ -102,8 +104,8 @@ function getDraftAndContext(composeBox) {
   } else if (trimmedBtn) {
     // It's a folded reply. Draft is just the box content.
     draft = composeBox.innerText.trim();
-    // Try to get context from the last thread message
-    const res = findLastMessageInThread();
+    // Try to get context from the last thread message (scoped to this thread)
+    const res = findLastMessageInThread(composeBox);
     context = res.context;
     senderName = res.senderName;
     recipientName = res.recipientName;
@@ -115,9 +117,15 @@ function getDraftAndContext(composeBox) {
   return { draft, context, senderName, recipientName };
 }
 
-function findLastMessageInThread() {
+function findLastMessageInThread(composeBox) {
+  // Scope the search to the current thread container to avoid reading a previous thread.
+  // Walk up from the compose box to find the nearest thread/conversation root.
+  const threadRoot = composeBox
+    ? (composeBox.closest('.nH, [role="main"], .aeF, .h7') || document)
+    : document;
+
   // Gmail thread messages are marked with role="listitem" or classes like 'adn'
-  const messages = Array.from(document.querySelectorAll('div[role="listitem"], div.adn, .aeu'));
+  const messages = Array.from(threadRoot.querySelectorAll('div[role="listitem"], div.adn, .aeu'));
   if (messages.length > 0) {
     // The last message in the list is usually the one being replied to
     const lastMsg = messages[messages.length - 1];
@@ -139,6 +147,27 @@ function findLastMessageInThread() {
 
 // ─── UI Factory ──────────────────────────────────────────────────────────────
 
+/**
+ * Convert plain text (with \n line breaks) into a DocumentFragment of Gmail-
+ * style <div> nodes. Each line becomes its own <div>; blank lines become
+ * <div><br></div> — exactly how Gmail's contenteditable represents text so
+ * that line breaks display and copy correctly.
+ */
+function textToNodes(text) {
+  const lines = text.split('\n');
+  const frag = document.createDocumentFragment();
+  for (const line of lines) {
+    const div = document.createElement('div');
+    if (line === '') {
+      div.innerHTML = '<br>';
+    } else {
+      div.textContent = line;
+    }
+    frag.appendChild(div);
+  }
+  return frag;
+}
+
 function attachUI(composeBox) {
   if (uiMap.has(composeBox)) return uiMap.get(composeBox);
 
@@ -156,8 +185,25 @@ function attachUI(composeBox) {
     <div class="gar-body"></div>
   `;
   
-  // Insert below the compose area
-  composeBox.parentNode.insertBefore(panel, composeBox.nextSibling);
+  // Insert ABOVE the compose area so the panel shows at the top of the compose
+  // window (between the To/Subject fields and the typing area).
+  // Use a safe helper to avoid NotFoundError when Gmail re-parents elements.
+  function safeInsertPanel() {
+    try {
+      const parent = composeBox.parentNode;
+      if (!parent) return; // compose box detached
+      // insertBefore(panel, composeBox) places the panel just above the body
+      if (composeBox.parentNode === parent) {
+        parent.insertBefore(panel, composeBox);
+      } else {
+        parent.appendChild(panel);
+      }
+    } catch (err) {
+      console.warn('[GAR] Could not insert panel, falling back to append:', err);
+      try { composeBox.parentNode?.appendChild(panel); } catch (_) {}
+    }
+  }
+  safeInsertPanel();
   composeBox.setAttribute('data-gar-attached', 'true');
 
   const bodyEl = panel.querySelector('.gar-body');
@@ -187,12 +233,15 @@ function attachUI(composeBox) {
     panel.classList.add('gar-visible', 'gar-err');
   };
 
-  const executeRefinement = async (isManual = false) => {
+  const executeRefinement = async (isManual = false, promptIndex = 1) => {
     const { draft, context, senderName, recipientName } = getDraftAndContext(composeBox);
     if (draft.length === 0) return hide();
     if (!isManual && draft.length < AUTO_MIN_CHARS) return hide();
 
-    const { apiKey, systemPrompt, enabled, debug, provider } = await getSettings();
+    const settings = await getSettings();
+    const { apiKey, enabled, debug, provider } = settings;
+    const systemPrompt = settings[`systemPrompt${promptIndex}`] || settings.systemPrompt1;
+    
     if (!enabled) return hide();
     if (!apiKey) return showError('⚙ Add API Key in extension settings');
 
@@ -234,7 +283,7 @@ function attachUI(composeBox) {
     }
   };
 
-  const triggerAuto = debounce(() => executeRefinement(false), DEBOUNCE_MS);
+  const triggerAuto = debounce(() => executeRefinement(false, 1), DEBOUNCE_MS);
 
   const controller = {
     executeRefinement,
@@ -254,18 +303,35 @@ function attachUI(composeBox) {
         }
         // Remove them
         nodesToRemove.forEach(n => n.remove());
-        // Insert the refined text as a new <div> before the quote
-        const newDiv = document.createElement('div');
-        newDiv.textContent = currentSuggestion;
-        composeBox.insertBefore(newDiv, quoteEl);
+        // Insert the refined text (preserving line breaks) before the quote
+        composeBox.insertBefore(textToNodes(currentSuggestion), quoteEl);
         // Add a blank line between draft and quote for readability
         const spacer = document.createElement('div');
         spacer.innerHTML = '<br>';
         composeBox.insertBefore(spacer, quoteEl);
       } else {
-        // No quoted section — safe to replace everything
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, currentSuggestion);
+        // No quoted section — replace the user-typed content but preserve Gmail's
+        // default signature block (.gmail_signature) which sits below the cursor.
+        const sigEl = composeBox.querySelector('.gmail_signature, .gmail_default');
+        if (sigEl) {
+          // Remove all nodes before the signature, then prepend the refined text
+          const nodesToRemove = [];
+          for (const node of composeBox.childNodes) {
+            if (node === sigEl) break;
+            nodesToRemove.push(node);
+          }
+          nodesToRemove.forEach(n => n.remove());
+          // Insert lines as proper <div> nodes so newlines render correctly
+          composeBox.insertBefore(textToNodes(currentSuggestion), sigEl);
+          // Blank line between refined text and signature
+          const spacer = document.createElement('div');
+          spacer.innerHTML = '<br>';
+          composeBox.insertBefore(spacer, sigEl);
+        } else {
+          // Truly no signature — safe to replace everything
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, currentSuggestion);
+        }
       }
 
       hide();
@@ -281,7 +347,10 @@ function attachUI(composeBox) {
 
 // 1. Unified Document Listener for Shortcut & Panel Interaction
 document.addEventListener('keydown', async (e) => {
-  const isShortcut = e.ctrlKey && (e.code === 'Space' || e.key === ' ');
+  const isShortcut1 = e.ctrlKey && e.key === '1';
+  const isShortcut2 = e.ctrlKey && e.key === '2';
+  const isShortcut3 = e.ctrlKey && e.key === '3';
+  const isShortcut = isShortcut1 || isShortcut2 || isShortcut3;
   const isTab = e.key === 'Tab';
   const isEsc = e.key === 'Escape';
 
@@ -293,15 +362,18 @@ document.addEventListener('keydown', async (e) => {
   const ui = attachUI(box);
 
   if (isShortcut) {
-    console.log('[GAR] Ctrl+Space shortcut detected');
+    const promptIndex = isShortcut1 ? 1 : (isShortcut2 ? 2 : 3);
+    console.log(`[GAR] Ctrl+${promptIndex} shortcut detected`);
     e.preventDefault();
     e.stopPropagation();
     const { enabled, triggerMode } = await getSettings();
-    if (enabled && triggerMode === 'shortcut') ui.executeRefinement(true);
+    if (enabled && triggerMode === 'shortcut') ui.executeRefinement(true, promptIndex);
   } else if (isTab || isEsc) {
-    // Check if panel is showing a suggestion
-    const panel = box.nextSibling;
-    if (panel && panel.classList.contains('gar-ready')) {
+    // Check if panel is showing a suggestion.
+    // Use querySelector to find the panel robustly — nextSibling is fragile
+    // when Gmail re-orders DOM siblings.
+    const panel = box.parentNode?.querySelector('.gar-panel.gar-ready');
+    if (panel) {
       e.preventDefault();
       e.stopPropagation();
       if (isTab) ui.accept();

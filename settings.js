@@ -3,7 +3,9 @@
 const providerEl    = document.getElementById('provider');
 const triggerModeEl = document.getElementById('triggerMode');
 const apiKeyEl      = document.getElementById('apiKey');
-const systemPromptEl= document.getElementById('systemPrompt');
+const systemPrompt1El = document.getElementById('systemPrompt1');
+const systemPrompt2El = document.getElementById('systemPrompt2');
+const systemPrompt3El = document.getElementById('systemPrompt3');
 const enabledToggle = document.getElementById('enabledToggle');
 const debugToggle   = document.getElementById('debugToggle');
 const saveBtn       = document.getElementById('saveBtn');
@@ -22,14 +24,18 @@ chrome.storage.local.get({
   provider: 'anthropic',
   triggerMode: 'shortcut',
   apiKey: '',
-  systemPrompt: '',
+  systemPrompt1: '',
+  systemPrompt2: '',
+  systemPrompt3: '',
   enabled: true,
   debug: false
 }, (data) => {
   providerEl.value = data.provider;
   triggerModeEl.value = data.triggerMode;
   apiKeyEl.value = data.apiKey;
-  systemPromptEl.value = data.systemPrompt;
+  systemPrompt1El.value = data.systemPrompt1 || '';
+  systemPrompt2El.value = data.systemPrompt2 || '';
+  systemPrompt3El.value = data.systemPrompt3 || '';
   enabledToggle.checked = data.enabled;
   debugToggle.checked = data.debug;
   updatePlaceholder();
@@ -78,12 +84,14 @@ testBtn.addEventListener('click', () => {
 
 // ── Save ─────────────────────────────────────────────────────────────────────
 saveBtn.addEventListener('click', () => {
-  const provider     = providerEl.value;
-  const triggerMode  = triggerModeEl.value;
-  const apiKey       = apiKeyEl.value.trim();
-  const systemPrompt = systemPromptEl.value.trim();
-  const enabled      = enabledToggle.checked;
-  const debug        = debugToggle.checked;
+  const provider      = providerEl.value;
+  const triggerMode   = triggerModeEl.value;
+  const apiKey        = apiKeyEl.value.trim();
+  const systemPrompt1 = systemPrompt1El.value.trim();
+  const systemPrompt2 = systemPrompt2El.value.trim();
+  const systemPrompt3 = systemPrompt3El.value.trim();
+  const enabled       = enabledToggle.checked;
+  const debug         = debugToggle.checked;
 
   if (!apiKey) {
     showStatus('API key is required.', 'err');
@@ -96,7 +104,11 @@ saveBtn.addEventListener('click', () => {
     return;
   }
 
-  chrome.storage.local.set({ provider, triggerMode, apiKey, systemPrompt, enabled, debug }, () => {
+  chrome.storage.local.set({ 
+    provider, triggerMode, apiKey, 
+    systemPrompt1, systemPrompt2, systemPrompt3, 
+    enabled, debug 
+  }, () => {
     showStatus('Saved ✓', 'ok');
   });
 });
