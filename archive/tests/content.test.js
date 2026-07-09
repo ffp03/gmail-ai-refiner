@@ -30,6 +30,7 @@ function loadContentInternals() {
       findProtectedBoundary,
       findContextBoundary,
       cloneWithoutProtectedContent,
+      removeContentBeforeBoundary,
       textToNodes
     };
   `);
@@ -75,6 +76,24 @@ describe('content.js compose boundary helpers', () => {
     expect(result.senderName).toBe('Sender');
   });
 
+  it('extracts draft when Gmail nests the draft and quote in one wrapper', () => {
+    const compose = document.createElement('div');
+    compose.innerHTML = `
+      <div class="gmail-wrapper">
+        <div>Please handle this nested reply.</div>
+        <div class="gmail_quote">
+          <div class="gmail_attr">On Wed, Sender &lt;sender@example.com&gt; wrote:</div>
+          <blockquote>Original nested request</blockquote>
+        </div>
+      </div>
+    `;
+
+    const result = internals.getDraftAndContext(compose);
+
+    expect(result.draft).toBe('Please handle this nested reply.');
+    expect(result.context).toContain('Original nested request');
+  });
+
   it('does not include a Gmail signature in the draft sent for refinement', () => {
     const compose = document.createElement('div');
     compose.innerHTML = `
@@ -105,5 +124,24 @@ describe('content.js compose boundary helpers', () => {
     expect(result.context).toContain('Forwarded message');
     expect(result.context).toContain('Forwarded body should stay untouched.');
     expect(boundary.textContent).toContain('Forwarded message');
+  });
+
+  it('removes only content before a nested protected boundary', () => {
+    const compose = document.createElement('div');
+    compose.innerHTML = `
+      <div>Top draft</div>
+      <div class="gmail-wrapper">
+        <div>Nested draft</div>
+        <div class="gmail_quote">Quoted content</div>
+      </div>
+    `;
+
+    const boundary = internals.findProtectedBoundary(compose);
+    const removedCount = internals.removeContentBeforeBoundary(compose, boundary);
+
+    expect(removedCount).toBeGreaterThanOrEqual(2);
+    expect(compose.textContent).not.toContain('Top draft');
+    expect(compose.textContent).not.toContain('Nested draft');
+    expect(compose.textContent).toContain('Quoted content');
   });
 });

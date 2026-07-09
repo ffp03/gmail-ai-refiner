@@ -151,39 +151,68 @@ function findContextBoundary(composeBox) {
 
 function findBoundary(composeBox, selector) {
   const protectedEl = composeBox.querySelector(selector);
-  let protectedChild = protectedEl || null;
-  while (protectedChild && protectedChild.parentNode !== composeBox) {
-    protectedChild = protectedChild.parentNode;
-  }
-
   const children = Array.from(composeBox.childNodes);
   const markerChild = children.find(node => nodeContainsProtectedMarker(node, selector)) || null;
-  if (protectedChild && markerChild) {
-    return children.indexOf(protectedChild) <= children.indexOf(markerChild) ? protectedChild : markerChild;
+  if (protectedEl && markerChild) {
+    const protectedTop = directChildFor(composeBox, protectedEl);
+    return children.indexOf(protectedTop) <= children.indexOf(markerChild) ? protectedEl : markerChild;
   }
-  return protectedChild || markerChild;
+  return protectedEl || markerChild;
+}
+
+function directChildFor(root, node) {
+  let child = node;
+  while (child && child.parentNode !== root) {
+    child = child.parentNode;
+  }
+  return child;
 }
 
 function cloneWithoutProtectedContent(composeBox, boundaryFinder = findProtectedBoundary) {
   const clone = composeBox.cloneNode(true);
   const boundary = boundaryFinder(clone);
   let protectedText = '';
+  let draftText = textOf(clone);
 
   if (boundary) {
-    const nodesToRemove = [];
-    let seenBoundary = false;
-    for (const node of clone.childNodes) {
-      if (node === boundary) seenBoundary = true;
-      if (seenBoundary) {
-        nodesToRemove.push(node);
-      }
-    }
-    protectedText = nodesToRemove.map(textOf).filter(Boolean).join('\n').trim();
-    nodesToRemove.forEach(node => node.remove());
+    const draftRange = document.createRange();
+    draftRange.setStart(clone, 0);
+    draftRange.setEndBefore(boundary);
+    const draftFragment = draftRange.cloneContents();
+    draftFragment.querySelectorAll?.('div[aria-label="Show trimmed content"], .gj, .gmail_signature, .gmail_default').forEach(node => node.remove());
+    draftText = textOf(draftFragment);
+
+    const protectedRange = document.createRange();
+    protectedRange.setStartBefore(boundary);
+    protectedRange.setEnd(clone, clone.childNodes.length);
+    protectedText = textOf(protectedRange.cloneContents());
   }
 
-  clone.querySelectorAll('div[aria-label="Show trimmed content"], .gj, .gmail_signature, .gmail_default').forEach(node => node.remove());
-  return { draftText: textOf(clone), protectedText, boundaryType: describeBoundary(boundary) };
+  return { draftText, protectedText, boundaryType: describeBoundary(boundary) };
+}
+
+function removeContentBeforeBoundary(root, boundary) {
+  const topChild = directChildFor(root, boundary);
+  if (!topChild) return 0;
+
+  let removedCount = 0;
+  while (root.firstChild && root.firstChild !== topChild) {
+    root.firstChild.remove();
+    removedCount += 1;
+  }
+
+  let childOnPath = boundary;
+  let parent = boundary.parentNode;
+  while (parent && parent !== root) {
+    while (parent.firstChild && parent.firstChild !== childOnPath) {
+      parent.firstChild.remove();
+      removedCount += 1;
+    }
+    childOnPath = parent;
+    parent = parent.parentNode;
+  }
+
+  return removedCount;
 }
 
 function getDraftAndContext(composeBox) {
@@ -456,23 +485,18 @@ function attachUI(composeBox) {
       if (boundary) {
         // ── Targeted replacement: only overwrite nodes BEFORE the gmail_quote ──
         // Collect all direct child nodes that precede the quote block
-        const nodesToRemove = [];
-        for (const node of composeBox.childNodes) {
-          if (node === boundary) break;
-          nodesToRemove.push(node);
-        }
-        // Remove them
-        nodesToRemove.forEach(n => n.remove());
+        const removedNodeCount = removeContentBeforeBoundary(composeBox, boundary);
+        const insertionParent = boundary.parentNode || composeBox;
         // Insert the refined text (preserving line breaks) before the quote
-        composeBox.insertBefore(textToNodes(currentSuggestion), boundary);
+        insertionParent.insertBefore(textToNodes(currentSuggestion), boundary);
         // Add a blank line between draft and quote for readability
         const spacer = document.createElement('div');
         spacer.innerHTML = '<br>';
-        composeBox.insertBefore(spacer, boundary);
+        insertionParent.insertBefore(spacer, boundary);
         logDebug('suggestion_accepted', {
           mode: 'protected-boundary',
           boundaryType: describeBoundary(boundary),
-          removedNodeCount: nodesToRemove.length,
+          removedNodeCount,
           suggestionLength: currentSuggestion.length
         });
       } else {
