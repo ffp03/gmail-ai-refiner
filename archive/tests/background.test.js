@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 
 // Mock providers.js module before importing background.js
-jest.unstable_mockModule('../providers.js', () => ({
+jest.unstable_mockModule('../../providers.js', () => ({
   PROVIDERS: {
     anthropic: {
       endpoint: 'mock-endpoint',
@@ -13,19 +13,18 @@ jest.unstable_mockModule('../providers.js', () => ({
 }));
 
 // We need to use dynamic imports for the mocks to take effect in ESM
-const { PROVIDERS } = await import('../providers.js');
+const { PROVIDERS } = await import('../../providers.js');
 
 // Mock chrome API
 global.chrome = {
   runtime: {
     onMessage: { addListener: jest.fn() }
   },
-  commands: {
-    onCommand: { addListener: jest.fn() }
-  },
-  tabs: {
-    query: jest.fn(),
-    sendMessage: jest.fn()
+  storage: {
+    local: {
+      get: jest.fn((defaults, cb) => cb({ ...defaults, debug: false })),
+      set: jest.fn()
+    }
   }
 };
 
@@ -33,7 +32,7 @@ global.chrome = {
 global.fetch = jest.fn();
 
 // Load background script side-effects
-await import('../background.js');
+await import('../../background.js');
 
 // Extract the message listener that background.js registered
 const messageListener = global.chrome.runtime.onMessage.addListener.mock.calls[0][0];
@@ -65,10 +64,11 @@ describe('background.js', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
     expect(global.fetch.mock.calls[0][0]).toBe('mock-endpoint');
     expect(PROVIDERS.anthropic.buildHeaders).toHaveBeenCalledWith('key');
-    expect(PROVIDERS.anthropic.buildBody).toHaveBeenCalledWith('draft', 'sys');
+    expect(PROVIDERS.anthropic.buildBody).toHaveBeenCalledWith('draft', 'sys', '', '', '');
     expect(sendResponse).toHaveBeenCalledWith({ 
       success: true, 
-      refined: { subject: 'Sub', body: 'Refined text', signature: 'Best' } 
+      refined: { subject: 'Sub', body: 'Refined text', signature: 'Best' },
+      rawRequestBody: { mock: 'body' }
     });
   });
 

@@ -10,7 +10,11 @@ const enabledToggle = document.getElementById('enabledToggle');
 const debugToggle   = document.getElementById('debugToggle');
 const saveBtn       = document.getElementById('saveBtn');
 const testBtn       = document.getElementById('testBtn');
+const exportLogBtn  = document.getElementById('exportLogBtn');
+const clearLogBtn   = document.getElementById('clearLogBtn');
 const statusEl      = document.getElementById('status');
+const DEBUG_LOG_KEY = 'garDebugLog';
+const DEBUG_LOG_LIMIT = 500;
 
 // ── Validation prefixes mapped by provider ID (matches providers.js)
 const keyPrefixes = {
@@ -18,6 +22,36 @@ const keyPrefixes = {
   gemini: null,
   deepseek: 'sk-'
 };
+
+function redactForLog(value) {
+  if (Array.isArray(value)) return value.map(redactForLog);
+  if (typeof value === 'string') {
+    return value
+      .replace(/([?&]key=)[^&\s]+/gi, '$1[redacted]')
+      .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
+      .replace(/\b(sk-ant-[A-Za-z0-9._-]+|sk-[A-Za-z0-9._-]+|AIza[0-9A-Za-z_-]+)\b/g, '[redacted]');
+  }
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, val] of Object.entries(value)) {
+    out[key] = /apiKey|authorization|x-api-key/i.test(key) ? '[redacted]' : redactForLog(val);
+  }
+  return out;
+}
+
+function logDebug(event, details = {}) {
+  chrome.storage.local.get({ debug: false, [DEBUG_LOG_KEY]: [] }, (data) => {
+    if (!data.debug) return;
+    const entry = {
+      ts: new Date().toISOString(),
+      source: 'settings',
+      event,
+      details: redactForLog(details)
+    };
+    const existing = Array.isArray(data[DEBUG_LOG_KEY]) ? data[DEBUG_LOG_KEY] : [];
+    chrome.storage.local.set({ [DEBUG_LOG_KEY]: [...existing, entry].slice(-DEBUG_LOG_LIMIT) });
+  });
+}
 
 // ── Load saved settings ──────────────────────────────────────────────────────
 chrome.storage.local.get({
@@ -62,6 +96,7 @@ testBtn.addEventListener('click', () => {
   }
 
   showStatus('Testing connection...', 'pending');
+  logDebug('test_connection_started', { provider });
   
   chrome.runtime.sendMessage({
     type: 'REFINE_EMAIL',
@@ -71,12 +106,15 @@ testBtn.addEventListener('click', () => {
     provider
   }, (response) => {
     if (chrome.runtime.lastError) {
+      logDebug('test_connection_runtime_error', { message: chrome.runtime.lastError.message });
       showStatus('Extension error: ' + chrome.runtime.lastError.message, 'err', true);
       return;
     }
     if (response?.success) {
+      logDebug('test_connection_succeeded', { provider });
       showStatus('Connection Successful! ✓', 'ok');
     } else {
+      logDebug('test_connection_failed', { provider, error: response?.error || 'Unknown' });
       showStatus('API Error: ' + (response?.error || 'Unknown'), 'err', true);
     }
   });
@@ -109,7 +147,36 @@ saveBtn.addEventListener('click', () => {
     systemPrompt1, systemPrompt2, systemPrompt3, 
     enabled, debug 
   }, () => {
+    logDebug('settings_saved', { provider, triggerMode, enabled, debug });
     showStatus('Saved ✓', 'ok');
+  });
+});
+
+exportLogBtn.addEventListener('click', () => {
+  chrome.storage.local.get({ [DEBUG_LOG_KEY]: [] }, (data) => {
+    const log = Array.isArray(data[DEBUG_LOG_KEY]) ? data[DEBUG_LOG_KEY] : [];
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      extension: 'Gmail AI Refiner',
+      entries: log
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `gmail-ai-refiner-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    logDebug('debug_log_exported', { entryCount: log.length });
+    showStatus(`Exported ${log.length} log entries.`, 'ok');
+  });
+});
+
+clearLogBtn.addEventListener('click', () => {
+  chrome.storage.local.set({ [DEBUG_LOG_KEY]: [] }, () => {
+    showStatus('Debug log cleared.', 'ok');
   });
 });
 

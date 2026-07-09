@@ -1,4 +1,4 @@
-import { PROVIDERS, extractJson } from '../providers.js';
+import { PROVIDERS, extractJson } from '../../providers.js';
 
 describe('providers.js registry', () => {
   describe('extractJson', () => {

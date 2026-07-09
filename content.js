@@ -3,6 +3,8 @@ console.log('[GAR] Content script loaded');
 
 const DEBOUNCE_MS = 1800;
 const AUTO_MIN_CHARS = 20;
+const DEBUG_LOG_KEY = 'garDebugLog';
+const DEBUG_LOG_LIMIT = 500;
 const uiMap = new WeakMap(); // Maps compose boxes to their UI controllers
 
 // ─── Constants & Selectors ───────────────────────────────────────────────────
@@ -49,6 +51,41 @@ function debounce(fn, ms) {
   };
 }
 
+function redactForLog(value) {
+  if (Array.isArray(value)) return value.map(redactForLog);
+  if (typeof value === 'string') {
+    return value
+      .replace(/([?&]key=)[^&\s]+/gi, '$1[redacted]')
+      .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
+      .replace(/\b(sk-ant-[A-Za-z0-9._-]+|sk-[A-Za-z0-9._-]+|AIza[0-9A-Za-z_-]+)\b/g, '[redacted]');
+  }
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, val] of Object.entries(value)) {
+    out[key] = /apiKey|authorization|x-api-key/i.test(key) ? '[redacted]' : redactForLog(val);
+  }
+  return out;
+}
+
+function logDebug(event, details = {}) {
+  if (!chrome.runtime?.id) return;
+  try {
+    chrome.storage.local.get({ debug: false, [DEBUG_LOG_KEY]: [] }, (data) => {
+      if (!data.debug) return;
+      const entry = {
+        ts: new Date().toISOString(),
+        source: 'content',
+        event,
+        details: redactForLog(details)
+      };
+      const existing = Array.isArray(data[DEBUG_LOG_KEY]) ? data[DEBUG_LOG_KEY] : [];
+      chrome.storage.local.set({ [DEBUG_LOG_KEY]: [...existing, entry].slice(-DEBUG_LOG_LIMIT) });
+    });
+  } catch (e) {
+    console.warn('[GAR] Failed to write debug log:', e);
+  }
+}
+
 function findActiveComposeBox() {
   const active = document.activeElement;
   if (!active) return null;
@@ -59,8 +96,98 @@ function findActiveComposeBox() {
   return null;
 }
 
+const PROTECTED_SELECTORS = [
+  '.gmail_quote',
+  '.gmail_attr',
+  '.gmail_signature',
+  '.gmail_default',
+  'blockquote[type="cite"]',
+  'div[aria-label="Show trimmed content"]',
+  '.gj'
+];
+
+const PROTECTED_SELECTOR = PROTECTED_SELECTORS.join(',');
+const CONTEXT_SELECTORS = PROTECTED_SELECTORS.filter(sel => sel !== '.gmail_signature' && sel !== '.gmail_default');
+const CONTEXT_SELECTOR = CONTEXT_SELECTORS.join(',');
+const FORWARDED_MARKER_RE = /^\s*(-{2,}\s*)?(Forwarded message|Original Message|Begin forwarded message)\s*(-{2,}\s*)?$/i;
+
+function textOf(node) {
+  const raw = node?.innerText || node?.textContent || '';
+  return raw
+    .replace(/\u00a0/g, ' ')
+    .split(/\r?\n/)
+    .map(line => line.replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function nodeContainsProtectedMarker(node, selector = PROTECTED_SELECTOR) {
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    if (node.matches(selector)) return true;
+    if (node.querySelector(selector)) return true;
+  }
+  const lines = textOf(node).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  return lines.some(line => FORWARDED_MARKER_RE.test(line));
+}
+
+function describeBoundary(node) {
+  if (!node) return '';
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    for (const sel of PROTECTED_SELECTORS) {
+      if (node.matches(sel) || node.querySelector(sel)) return sel;
+    }
+  }
+  return 'forwarded-marker';
+}
+
+function findProtectedBoundary(composeBox) {
+  return findBoundary(composeBox, PROTECTED_SELECTOR);
+}
+
+function findContextBoundary(composeBox) {
+  return findBoundary(composeBox, CONTEXT_SELECTOR);
+}
+
+function findBoundary(composeBox, selector) {
+  const protectedEl = composeBox.querySelector(selector);
+  let protectedChild = protectedEl || null;
+  while (protectedChild && protectedChild.parentNode !== composeBox) {
+    protectedChild = protectedChild.parentNode;
+  }
+
+  const children = Array.from(composeBox.childNodes);
+  const markerChild = children.find(node => nodeContainsProtectedMarker(node, selector)) || null;
+  if (protectedChild && markerChild) {
+    return children.indexOf(protectedChild) <= children.indexOf(markerChild) ? protectedChild : markerChild;
+  }
+  return protectedChild || markerChild;
+}
+
+function cloneWithoutProtectedContent(composeBox, boundaryFinder = findProtectedBoundary) {
+  const clone = composeBox.cloneNode(true);
+  const boundary = boundaryFinder(clone);
+  let protectedText = '';
+
+  if (boundary) {
+    const nodesToRemove = [];
+    let seenBoundary = false;
+    for (const node of clone.childNodes) {
+      if (node === boundary) seenBoundary = true;
+      if (seenBoundary) {
+        nodesToRemove.push(node);
+      }
+    }
+    protectedText = nodesToRemove.map(textOf).filter(Boolean).join('\n').trim();
+    nodesToRemove.forEach(node => node.remove());
+  }
+
+  clone.querySelectorAll('div[aria-label="Show trimmed content"], .gj, .gmail_signature, .gmail_default').forEach(node => node.remove());
+  return { draftText: textOf(clone), protectedText, boundaryType: describeBoundary(boundary) };
+}
+
 function getDraftAndContext(composeBox) {
-  const quoteEl = composeBox.querySelector('.gmail_quote');
+  const boundary = findContextBoundary(composeBox);
   
   // Try to find the trimmed content button inside or near the compose box
   let trimmedBtn = composeBox.querySelector('div[aria-label="Show trimmed content"], .gj');
@@ -82,36 +209,46 @@ function getDraftAndContext(composeBox) {
   let senderName = '';
   let recipientName = '';
 
-  if (quoteEl) {
-    const clone = composeBox.cloneNode(true);
-    const q = clone.querySelector('.gmail_quote');
-    const b = clone.querySelector('div[aria-label="Show trimmed content"], .gj');
-    const attr = q?.querySelector('.gmail_attr'); // e.g. "On Wed, ..."
+  if (boundary) {
+    const attr = boundary.querySelector?.('.gmail_attr') || (boundary.matches?.('.gmail_attr') ? boundary : null);
     
     if (attr) {
       // Try to extract name from "Sender <email> wrote:"
-      const match = attr.innerText.match(/On .+, (.+?) <.+> wrote:/);
+      const match = textOf(attr).match(/On .+, (.+?) <.+> wrote:/);
       if (match) senderName = match[1];
     }
-    
-    if (q) {
-      context = q.innerText.trim();
-      q.remove();
-    }
-    if (b) b.remove();
-    
-    draft = clone.innerText.trim();
+
+    const extracted = cloneWithoutProtectedContent(composeBox, findContextBoundary);
+    draft = extracted.draftText;
+    context = extracted.protectedText;
+    logDebug('draft_context_extracted', {
+      mode: 'protected-boundary',
+      boundaryType: extracted.boundaryType,
+      draftLength: draft.length,
+      contextLength: context.length
+    });
   } else if (trimmedBtn) {
     // It's a folded reply. Draft is just the box content.
-    draft = composeBox.innerText.trim();
+    draft = textOf(composeBox);
     // Try to get context from the last thread message (scoped to this thread)
     const res = findLastMessageInThread(composeBox);
     context = res.context;
     senderName = res.senderName;
     recipientName = res.recipientName;
+    logDebug('draft_context_extracted', {
+      mode: 'folded-thread',
+      draftLength: draft.length,
+      contextLength: context.length
+    });
   } else {
     // Probably a new email or unfolded without a clear .gmail_quote (unlikely for replies)
-    draft = composeBox.innerText.trim();
+    const extracted = cloneWithoutProtectedContent(composeBox);
+    draft = extracted.draftText;
+    logDebug('draft_context_extracted', {
+      mode: 'plain-compose',
+      draftLength: draft.length,
+      contextLength: 0
+    });
   }
   
   return { draft, context, senderName, recipientName };
@@ -208,6 +345,7 @@ function attachUI(composeBox) {
 
   const bodyEl = panel.querySelector('.gar-body');
   let currentSuggestion = '';
+  let requestCounter = 0;
 
   const hide = () => {
     panel.classList.remove('gar-visible', 'gar-loading', 'gar-ready', 'gar-err');
@@ -234,6 +372,7 @@ function attachUI(composeBox) {
   };
 
   const executeRefinement = async (isManual = false, promptIndex = 1) => {
+    const requestId = ++requestCounter;
     const { draft, context, senderName, recipientName } = getDraftAndContext(composeBox);
     if (draft.length === 0) return hide();
     if (!isManual && draft.length < AUTO_MIN_CHARS) return hide();
@@ -253,6 +392,14 @@ function attachUI(composeBox) {
       console.log('Context Recipient:', recipientName || '(Unknown)');
       console.log('-------------------------------');
     }
+    logDebug('refine_requested', {
+      requestId,
+      isManual,
+      promptIndex,
+      provider,
+      draftLength: draft.length,
+      contextLength: context.length
+    });
     
     showLoading();
     try {
@@ -260,7 +407,12 @@ function attachUI(composeBox) {
         { type: 'REFINE_EMAIL', draft, context, senderName, recipientName, systemPrompt, apiKey, provider },
         (response) => {
           if (chrome.runtime.lastError) {
+            logDebug('refine_runtime_error', { requestId, message: chrome.runtime.lastError.message });
             showError('⚠️ Context invalidated. Refresh Gmail tab.');
+            return;
+          }
+          if (requestId !== requestCounter) {
+            logDebug('refine_stale_response_ignored', { requestId, activeRequestId: requestCounter });
             return;
           }
           if (response.success) {
@@ -272,13 +424,21 @@ function attachUI(composeBox) {
             const res = response.refined;
             const refinedBody = (typeof res === 'object') ? (res.body || res.refined_email) : res;
             if (debug && typeof res === 'object') console.log('[GAR] Discarded signature:', res.signature);
+            logDebug('refine_succeeded', {
+              requestId,
+              refinedLength: refinedBody?.length || 0,
+              hasSubject: Boolean(res?.subject),
+              hasSignature: Boolean(res?.signature)
+            });
             showReady(refinedBody);
           } else {
+            logDebug('refine_failed', { requestId, error: response.error });
             showError(response.error);
           }
         }
       );
     } catch (e) {
+      logDebug('refine_exception', { requestId, message: e.message });
       showError('⚠️ Extension reloaded. Please refresh the page.');
     }
   };
@@ -292,23 +452,29 @@ function attachUI(composeBox) {
       if (!currentSuggestion) return;
       composeBox.focus();
 
-      const quoteEl = composeBox.querySelector('.gmail_quote');
-      if (quoteEl) {
+      const boundary = findProtectedBoundary(composeBox);
+      if (boundary) {
         // ── Targeted replacement: only overwrite nodes BEFORE the gmail_quote ──
         // Collect all direct child nodes that precede the quote block
         const nodesToRemove = [];
         for (const node of composeBox.childNodes) {
-          if (node === quoteEl) break;
+          if (node === boundary) break;
           nodesToRemove.push(node);
         }
         // Remove them
         nodesToRemove.forEach(n => n.remove());
         // Insert the refined text (preserving line breaks) before the quote
-        composeBox.insertBefore(textToNodes(currentSuggestion), quoteEl);
+        composeBox.insertBefore(textToNodes(currentSuggestion), boundary);
         // Add a blank line between draft and quote for readability
         const spacer = document.createElement('div');
         spacer.innerHTML = '<br>';
-        composeBox.insertBefore(spacer, quoteEl);
+        composeBox.insertBefore(spacer, boundary);
+        logDebug('suggestion_accepted', {
+          mode: 'protected-boundary',
+          boundaryType: describeBoundary(boundary),
+          removedNodeCount: nodesToRemove.length,
+          suggestionLength: currentSuggestion.length
+        });
       } else {
         // No quoted section — replace the user-typed content but preserve Gmail's
         // default signature block (.gmail_signature) which sits below the cursor.
@@ -327,10 +493,19 @@ function attachUI(composeBox) {
           const spacer = document.createElement('div');
           spacer.innerHTML = '<br>';
           composeBox.insertBefore(spacer, sigEl);
+          logDebug('suggestion_accepted', {
+            mode: 'signature-boundary',
+            removedNodeCount: nodesToRemove.length,
+            suggestionLength: currentSuggestion.length
+          });
         } else {
           // Truly no signature — safe to replace everything
           document.execCommand('selectAll', false, null);
           document.execCommand('insertText', false, currentSuggestion);
+          logDebug('suggestion_accepted', {
+            mode: 'replace-all',
+            suggestionLength: currentSuggestion.length
+          });
         }
       }
 

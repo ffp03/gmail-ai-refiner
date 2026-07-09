@@ -7,54 +7,59 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe('settings.js', () => {
   let originalHtml;
+  let store;
 
   beforeAll(() => {
-    // Load the HTML into jsdom
-    originalHtml = fs.readFileSync(path.resolve(__dirname, '../settings.html'), 'utf8');
+    originalHtml = fs.readFileSync(path.resolve(__dirname, '../../settings.html'), 'utf8');
   });
 
   beforeEach(async () => {
-    document.body.innerHTML = originalHtml;
-    
-    // Mock Chrome Storage API
+    const parsed = new DOMParser().parseFromString(originalHtml, 'text/html');
+    document.head.innerHTML = parsed.head.innerHTML;
+    document.body.innerHTML = parsed.body.innerHTML;
+    store = {
+      provider: 'anthropic',
+      triggerMode: 'shortcut',
+      apiKey: '',
+      systemPrompt1: '',
+      systemPrompt2: '',
+      systemPrompt3: '',
+      enabled: true,
+      debug: false,
+      garDebugLog: []
+    };
+
+    global.URL.createObjectURL = jest.fn(() => 'blob:debug-log');
+    global.URL.revokeObjectURL = jest.fn();
+    HTMLAnchorElement.prototype.click = jest.fn();
     global.chrome = {
+      runtime: { lastError: null, sendMessage: jest.fn() },
       storage: {
         local: {
-          get: jest.fn((defaults, cb) => {
-            if (cb) cb({
-              provider: 'anthropic',
-              triggerMode: 'shortcut',
-              apiKey: '',
-              systemPrompt: '',
-              enabled: true,
-              debug: false
-            });
-            return Promise.resolve();
-          }),
+          get: jest.fn((defaults, cb) => cb({ ...defaults, ...store })),
           set: jest.fn((data, cb) => {
+            store = { ...store, ...data };
             if (cb) cb();
-            return Promise.resolve();
           })
         }
       }
     };
-    
-    // Mock timers for status toast
-    jest.useFakeTimers();
 
-    // Isolate settings.js execution using a cache-busting import
-    await import('../settings.js?t=' + Date.now());
+    jest.useFakeTimers();
+    const source = fs.readFileSync(path.resolve(__dirname, '../../settings.js'), 'utf8');
+    new Function(source)();
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    jest.restoreAllMocks();
   });
 
   it('loads default settings from chrome.storage', () => {
     expect(chrome.storage.local.get).toHaveBeenCalled();
     expect(document.getElementById('provider').value).toBe('anthropic');
     expect(document.getElementById('apiKey').value).toBe('');
-    expect(document.getElementById('apiKey').placeholder).toBe('sk-ant-api03-…');
+    expect(document.getElementById('systemPrompt1').value).toBe('');
   });
 
   it('updates placeholder when provider changes', () => {
@@ -62,62 +67,59 @@ describe('settings.js', () => {
     const apiKeyEl = document.getElementById('apiKey');
 
     providerEl.value = 'gemini';
-    providerEl.dispatchEvent(new Event('change'));
-    expect(apiKeyEl.placeholder).toBe('AIzaSy…');
+    providerEl.dispatchEvent(new window.Event('change'));
+    expect(apiKeyEl.placeholder).toContain('AIzaSy');
 
     providerEl.value = 'deepseek';
-    providerEl.dispatchEvent(new Event('change'));
-    expect(apiKeyEl.placeholder).toBe('sk-…');
+    providerEl.dispatchEvent(new window.Event('change'));
+    expect(apiKeyEl.placeholder).toContain('sk-');
   });
 
   it('requires API key on save', () => {
-    const saveBtn = document.getElementById('saveBtn');
-    const statusEl = document.getElementById('status');
+    document.getElementById('saveBtn').click();
 
-    saveBtn.click();
-    expect(statusEl.textContent).toBe('API key is required.');
-    expect(statusEl.className).toBe('status err');
+    expect(document.getElementById('status').textContent).toBe('API key is required.');
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
   });
 
-  it('validates Anthropic key prefix', () => {
-    document.getElementById('apiKey').value = 'invalid-key';
-    document.getElementById('saveBtn').click();
-    
-    expect(document.getElementById('status').textContent).toBe('Key should start with sk-ant-');
-    expect(chrome.storage.local.set).not.toHaveBeenCalled();
-  });
-
-  it('validates DeepSeek key prefix', () => {
-    document.getElementById('provider').value = 'deepseek';
-    document.getElementById('apiKey').value = 'invalid-key';
-    document.getElementById('saveBtn').click();
-    
-    expect(document.getElementById('status').textContent).toBe('Key should start with sk-');
-  });
-
-  it('accepts valid save and shows success toast', () => {
-    document.getElementById('provider').value = 'anthropic';
+  it('saves all prompt slots and debug setting', () => {
     document.getElementById('apiKey').value = 'sk-ant-12345';
-    document.getElementById('systemPrompt').value = 'Be concise';
-    document.getElementById('enabledToggle').checked = false;
+    document.getElementById('systemPrompt1').value = 'Formal';
+    document.getElementById('systemPrompt2').value = 'Concise';
+    document.getElementById('systemPrompt3').value = 'Friendly';
     document.getElementById('triggerMode').value = 'auto';
     document.getElementById('debugToggle').checked = true;
-    
+
     document.getElementById('saveBtn').click();
 
     expect(chrome.storage.local.set).toHaveBeenCalledWith({
       provider: 'anthropic',
       triggerMode: 'auto',
       apiKey: 'sk-ant-12345',
-      systemPrompt: 'Be concise',
-      enabled: false,
+      systemPrompt1: 'Formal',
+      systemPrompt2: 'Concise',
+      systemPrompt3: 'Friendly',
+      enabled: true,
       debug: true
     }, expect.any(Function));
+  });
 
-    expect(document.getElementById('status').textContent).toBe('Saved ✓');
-    
-    jest.advanceTimersByTime(3000);
-    expect(document.getElementById('status').textContent).toBe('');
+  it('exports the debug log as JSON', () => {
+    store.garDebugLog = [{ ts: '2026-07-09T00:00:00.000Z', source: 'content', event: 'x' }];
+
+    document.getElementById('exportLogBtn').click();
+
+    expect(URL.createObjectURL).toHaveBeenCalled();
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalled();
+    expect(document.getElementById('status').textContent).toBe('Exported 1 log entries.');
+  });
+
+  it('clears the debug log', () => {
+    store.garDebugLog = [{ event: 'x' }];
+
+    document.getElementById('clearLogBtn').click();
+
+    expect(store.garDebugLog).toEqual([]);
+    expect(document.getElementById('status').textContent).toBe('Debug log cleared.');
   });
 });

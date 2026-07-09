@@ -284,6 +284,11 @@
     <button class="btn-save" id="saveBtn">Save Settings</button>
   </div>
 
+  <div class="footer debug-actions">
+    <button class="btn-secondary" id="exportLogBtn">Export Debug Log</button>
+    <button class="btn-secondary" id="clearLogBtn">Clear Log</button>
+  </div>
+
   <div class="status" id="status"></div>
 
   <div class="hint">
@@ -292,7 +297,8 @@
   </div>
 
   <style>
-    .btn-test {
+    .btn-test,
+    .btn-secondary {
       flex: 1;
       padding: 10px;
       background: #333;
@@ -305,7 +311,14 @@
       cursor: pointer;
       margin-right: 8px;
     }
-    .btn-test:hover { background: #444; }
+    .btn-test:hover,
+    .btn-secondary:hover { background: #444; }
+    .debug-actions {
+      margin-top: 8px;
+    }
+    .debug-actions .btn-secondary:last-child {
+      margin-right: 0;
+    }
   </style>
 
   <script src="settings.js" type="module"></script>
