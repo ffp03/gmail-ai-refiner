@@ -407,11 +407,13 @@ function attachUI(composeBox) {
   // Use a safe helper to avoid NotFoundError when Gmail re-parents elements.
   function safeInsertPanel() {
     try {
-      const parent = composeBox.parentNode;
+      const mountTarget = composeBox.closest('.Ar.Au, .Ar.As') || composeBox.closest('.aO7') || composeBox;
+      const parent = mountTarget.parentNode;
       if (!parent) return; // compose box detached
-      // insertBefore(panel, composeBox) places the panel just above the body
-      if (composeBox.parentNode === parent) {
-        parent.insertBefore(panel, composeBox);
+      // Put the panel above Gmail's editor wrapper, not inside the editable
+      // overlay/highlighter layer where it can overlap the message body.
+      if (mountTarget.parentNode === parent) {
+        parent.insertBefore(panel, mountTarget);
       } else {
         parent.appendChild(panel);
       }
@@ -622,7 +624,8 @@ document.addEventListener('keydown', async (e) => {
     // Check if panel is showing a suggestion.
     // Use querySelector to find the panel robustly — nextSibling is fragile
     // when Gmail re-orders DOM siblings.
-    const panel = box.parentNode?.querySelector('.gar-panel.gar-ready');
+      const panelRoot = box.closest('.M9, .ip, .AD, .nH, [role="main"]') || box.parentNode;
+      const panel = panelRoot?.querySelector('.gar-panel.gar-ready');
     if (panel) {
       e.preventDefault();
       e.stopPropagation();

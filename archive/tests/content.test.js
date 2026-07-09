@@ -32,6 +32,7 @@ function loadContentInternals() {
       cloneWithoutProtectedContent,
       removeContentBeforeBoundary,
       rawGmailSnapshot,
+      attachUI,
       textToNodes
     };
   `);
@@ -162,5 +163,22 @@ describe('content.js compose boundary helpers', () => {
     expect(snapshot.composeOuterHTML).toContain('gmail-wrapper');
     expect(snapshot.boundaryOuterHTML).toContain('gmail_quote');
     expect(snapshot.boundaryAncestorChain.join(' ')).toContain('gmail-wrapper');
+  });
+
+  it('mounts the suggestion panel above Gmail editor wrapper', () => {
+    document.body.innerHTML = `
+      <div class="Ar Au Ao">
+        <div class="aO7">
+          <div class="Am Al editable" aria-label="Message Body" g_editable="true" contenteditable="true"></div>
+        </div>
+      </div>
+    `;
+    const compose = document.querySelector('.editable');
+
+    internals.attachUI(compose);
+
+    const wrapper = document.querySelector('.Ar.Au');
+    expect(wrapper.previousElementSibling.className).toBe('gar-panel');
+    expect(document.querySelector('.aO7 > .gar-panel')).toBeNull();
   });
 });
