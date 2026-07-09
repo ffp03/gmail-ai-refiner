@@ -5,6 +5,8 @@ const DEBOUNCE_MS = 1800;
 const AUTO_MIN_CHARS = 20;
 const DEBUG_LOG_KEY = 'garDebugLog';
 const DEBUG_LOG_LIMIT = 500;
+const DEBUG_HTML_LIMIT = 60000;
+const DEBUG_TEXT_LIMIT = 12000;
 const uiMap = new WeakMap(); // Maps compose boxes to their UI controllers
 
 // ─── Constants & Selectors ───────────────────────────────────────────────────
@@ -120,6 +122,52 @@ function textOf(node) {
     .filter(Boolean)
     .join('\n')
     .trim();
+}
+
+function truncateDebugValue(value, limit) {
+  const text = String(value || '');
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n...[truncated ${text.length - limit} chars]`;
+}
+
+function elementSummary(el) {
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+  const id = el.id ? `#${el.id}` : '';
+  const cls = el.className && typeof el.className === 'string'
+    ? `.${el.className.trim().split(/\s+/).filter(Boolean).join('.')}`
+    : '';
+  const attrs = ['role', 'aria-label', 'contenteditable', 'g_editable']
+    .map(name => el.getAttribute(name) ? `[${name}="${el.getAttribute(name)}"]` : '')
+    .join('');
+  return `${el.tagName.toLowerCase()}${id}${cls}${attrs}`;
+}
+
+function ancestorChain(el, stopAt = document.body, limit = 8) {
+  const chain = [];
+  let cur = el;
+  while (cur && cur !== stopAt && chain.length < limit) {
+    chain.push(elementSummary(cur));
+    cur = cur.parentElement;
+  }
+  if (cur === stopAt) chain.push(elementSummary(cur));
+  return chain;
+}
+
+function rawGmailSnapshot(composeBox, boundary = null) {
+  const composeContainer = composeBox.closest('.M9, .ip, .AD, .nH, [role="main"]') || composeBox.parentElement;
+  return {
+    note: 'Raw Gmail DOM is captured only when debug mode is enabled and may include private email content.',
+    composeSummary: elementSummary(composeBox),
+    composeAncestorChain: ancestorChain(composeBox),
+    composeText: truncateDebugValue(textOf(composeBox), DEBUG_TEXT_LIMIT),
+    composeOuterHTML: truncateDebugValue(composeBox.outerHTML || '', DEBUG_HTML_LIMIT),
+    containerSummary: elementSummary(composeContainer),
+    containerOuterHTML: truncateDebugValue(composeContainer?.outerHTML || '', DEBUG_HTML_LIMIT),
+    boundarySummary: elementSummary(boundary),
+    boundaryAncestorChain: boundary ? ancestorChain(boundary, composeBox) : [],
+    boundaryText: truncateDebugValue(textOf(boundary), DEBUG_TEXT_LIMIT),
+    boundaryOuterHTML: truncateDebugValue(boundary?.outerHTML || '', DEBUG_HTML_LIMIT)
+  };
 }
 
 function nodeContainsProtectedMarker(node, selector = PROTECTED_SELECTOR) {
@@ -254,7 +302,8 @@ function getDraftAndContext(composeBox) {
       mode: 'protected-boundary',
       boundaryType: extracted.boundaryType,
       draftLength: draft.length,
-      contextLength: context.length
+      contextLength: context.length,
+      rawGmail: rawGmailSnapshot(composeBox, boundary)
     });
   } else if (trimmedBtn) {
     // It's a folded reply. Draft is just the box content.
@@ -267,7 +316,8 @@ function getDraftAndContext(composeBox) {
     logDebug('draft_context_extracted', {
       mode: 'folded-thread',
       draftLength: draft.length,
-      contextLength: context.length
+      contextLength: context.length,
+      rawGmail: rawGmailSnapshot(composeBox, trimmedBtn)
     });
   } else {
     // Probably a new email or unfolded without a clear .gmail_quote (unlikely for replies)
@@ -276,7 +326,8 @@ function getDraftAndContext(composeBox) {
     logDebug('draft_context_extracted', {
       mode: 'plain-compose',
       draftLength: draft.length,
-      contextLength: 0
+      contextLength: 0,
+      rawGmail: rawGmailSnapshot(composeBox, findProtectedBoundary(composeBox))
     });
   }
   

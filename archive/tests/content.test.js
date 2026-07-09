@@ -31,6 +31,7 @@ function loadContentInternals() {
       findContextBoundary,
       cloneWithoutProtectedContent,
       removeContentBeforeBoundary,
+      rawGmailSnapshot,
       textToNodes
     };
   `);
@@ -143,5 +144,23 @@ describe('content.js compose boundary helpers', () => {
     expect(compose.textContent).not.toContain('Top draft');
     expect(compose.textContent).not.toContain('Nested draft');
     expect(compose.textContent).toContain('Quoted content');
+  });
+
+  it('captures raw Gmail DOM details for debug exports', () => {
+    const compose = document.createElement('div');
+    compose.setAttribute('aria-label', 'Message Body');
+    compose.innerHTML = `
+      <div class="gmail-wrapper">
+        <div>Draft text</div>
+        <div class="gmail_quote">Quoted text</div>
+      </div>
+    `;
+
+    const boundary = internals.findProtectedBoundary(compose);
+    const snapshot = internals.rawGmailSnapshot(compose, boundary);
+
+    expect(snapshot.composeOuterHTML).toContain('gmail-wrapper');
+    expect(snapshot.boundaryOuterHTML).toContain('gmail_quote');
+    expect(snapshot.boundaryAncestorChain.join(' ')).toContain('gmail-wrapper');
   });
 });
