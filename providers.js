@@ -5,16 +5,17 @@ const baseSystemPrompt = `Act as my professional executive assistant. When I sub
 
 Guidelines:
 - Context: Understand that my drafts may be written in a rush and lack introductions, outros, or smooth transitions.
-- Logic & Gaps: Meaningfully fill in missing logic, smooth out transitions, and add standard professional pleasantries (intro/outro) yourself.
+- Logic & Gaps: Meaningfully fill in missing logic, smooth out transitions, and add standard professional pleasantries yourself — a greeting, and a closing sentence such as "Please let me know if you have any questions." Never add a valediction/sign-off (e.g. "Best regards,", "Sincerely,", "Thanks,") or a name — those always go in the separate signature field, see RULES.
 - Writing Style: Keep the writing simple, natural, and easy to follow.`;
 
 const jsonRules = `1. You MUST output ONLY valid JSON.
 2. The JSON object must have these exactly three keys:
    - "subject": A concise subject line for the email.
-   - "refined_email": The improved email body text (do NOT include the signature here).
-   - "signature": Any professional signature, sign-off, or placeholder the AI generates (kept separate from the body).
-3. Do NOT include markdown code blocks (like \`\`\`json). Just output the raw JSON string.
-4. Do NOT include any conversational text or preambles.`;
+   - "refined_email": The improved email body text.
+   - "signature": Any sign-off, valediction, closing line, or name/placeholder.
+3. "refined_email" must NEVER end with a valediction (e.g. "Best regards,", "Best,", "Sincerely,", "Thanks,", "Regards,") or a name/placeholder — not even as a natural-sounding pleasantry. Every closing of that kind belongs only in "signature", with nothing left behind in "refined_email".
+4. Do NOT include markdown code blocks (like \`\`\`json). Just output the raw JSON string.
+5. Do NOT include any conversational text or preambles.`;
 
 const defaultSystemPrompt = `${baseSystemPrompt}\nRULES:\n${jsonRules}`;
 
@@ -28,21 +29,61 @@ export function enforceJsonRules(customPrompt) {
   return `${trimmed}\n\nRULES:\n${jsonRules}`;
 }
 
+// Canonical email sign-off phrases. Matched only when a line consists of
+// ONLY the phrase (plus optional punctuation) — never mid-sentence — so a
+// closing sentence like "Thank you so much for your help." is left alone.
+const VALEDICTION_RE = /^(best regards|warm regards|warmest regards|kind regards|regards|sincerely|sincerely yours|yours sincerely|yours truly|yours faithfully|best wishes|respectfully|many thanks|thank you|thanks|best|cheers|take care)[,.!]?$/i;
+
+// A line that looks like a name or a placeholder for one: "[Your Name]",
+// "Sarah", "John Smith" — short, no sentence punctuation.
+const NAME_PLACEHOLDER_RE = /^(\[[^\]]{1,40}\]|[A-Z][a-zA-Z.'-]*(\s[A-Z][a-zA-Z.'-]*){0,3})$/;
+
+// Models are told to keep the signature/sign-off out of "refined_email", but
+// don't always comply (they treat a valediction as part of the "add a
+// pleasant outro" instruction). This is a deterministic safety net: strip a
+// trailing valediction line, optionally followed by a name/placeholder line,
+// off the body — regardless of what the model put in the JSON's own
+// "signature" field.
+function stripTrailingSignOff(body) {
+  const lines = body.split('\n');
+  let end = lines.length;
+  while (end > 0 && lines[end - 1].trim() === '') end--;
+  if (end === 0) return { body, signOff: '' };
+
+  const lastLine = lines[end - 1].trim();
+  let cutFrom = -1;
+
+  if (VALEDICTION_RE.test(lastLine)) {
+    cutFrom = end - 1;
+  } else if (end - 2 >= 0 && NAME_PLACEHOLDER_RE.test(lastLine) && VALEDICTION_RE.test(lines[end - 2].trim())) {
+    cutFrom = end - 2;
+  }
+
+  if (cutFrom === -1) return { body, signOff: '' };
+
+  const signOff = lines.slice(cutFrom, end).join('\n').trim();
+  const cleanedBody = lines.slice(0, cutFrom).join('\n').trim();
+  return { body: cleanedBody, signOff };
+}
+
 export function extractJson(text) {
   // Strip potential markdown wrappers like ```json\n...\n```
   let cleanText = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-  
+
   try {
     const parsed = JSON.parse(cleanText);
+    const { body, signOff } = stripTrailingSignOff(parsed.refined_email?.trim() || '');
+    const signature = [parsed.signature?.trim(), signOff].filter(Boolean).join('\n');
     return {
       subject: parsed.subject?.trim() || '',
-      body: parsed.refined_email?.trim() || '',
-      signature: parsed.signature?.trim() || ''
+      body,
+      signature
     };
   } catch (e) {
     // Fallback: If JSON parsing fails, treat the whole body as 'body'
-    const body = cleanText.replace(/^(Here('s| is).*:|Sure[!,]|Refined.*:)\s*\n/i, '').trim();
-    return { subject: '', body, signature: '' };
+    const rawBody = cleanText.replace(/^(Here('s| is).*:|Sure[!,]|Refined.*:)\s*\n/i, '').trim();
+    const { body, signOff } = stripTrailingSignOff(rawBody);
+    return { subject: '', body, signature: signOff };
   }
 }
 

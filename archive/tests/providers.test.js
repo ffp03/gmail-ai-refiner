@@ -21,6 +21,61 @@ describe('providers.js registry', () => {
       expect(result.body).toBe('Hello World');
       expect(result.subject).toBe('');
     });
+
+    it('strips a trailing valediction + placeholder name from refined_email', () => {
+      const input = JSON.stringify({
+        subject: 'Extension Granted',
+        refined_email: 'Dear Sahra,\n\nThank you for reaching out.\n\nBest regards,\n[Your Name]',
+        signature: ''
+      });
+      const result = extractJson(input);
+      expect(result.body).toBe('Dear Sahra,\n\nThank you for reaching out.');
+      expect(result.signature).toBe('Best regards,\n[Your Name]');
+    });
+
+    it('strips a trailing valediction + real name from refined_email', () => {
+      const input = JSON.stringify({
+        subject: '',
+        refined_email: 'Hi John,\n\nSounds good.\n\nThanks,\nSarah',
+        signature: ''
+      });
+      const result = extractJson(input);
+      expect(result.body).toBe('Hi John,\n\nSounds good.');
+      expect(result.signature).toBe('Thanks,\nSarah');
+    });
+
+    it('strips a standalone trailing valediction line with no name after it', () => {
+      const input = JSON.stringify({
+        subject: '',
+        refined_email: 'See you at the meeting.\n\nRegards,',
+        signature: ''
+      });
+      const result = extractJson(input);
+      expect(result.body).toBe('See you at the meeting.');
+      expect(result.signature).toBe('Regards,');
+    });
+
+    it('combines a stripped valediction with an already-populated signature field', () => {
+      const input = JSON.stringify({
+        subject: '',
+        refined_email: 'Approved.\n\nBest,\n[Your Name]',
+        signature: 'Best,\n[Your Name]'
+      });
+      const result = extractJson(input);
+      expect(result.body).toBe('Approved.');
+      expect(result.signature).toBe('Best,\n[Your Name]\nBest,\n[Your Name]');
+    });
+
+    it('does not strip a closing sentence that merely contains a valediction word mid-sentence', () => {
+      const input = JSON.stringify({
+        subject: '',
+        refined_email: 'Thank you so much for your patience and understanding.',
+        signature: ''
+      });
+      const result = extractJson(input);
+      expect(result.body).toBe('Thank you so much for your patience and understanding.');
+      expect(result.signature).toBe('');
+    });
   });
 
   describe('Anthropic Provider', () => {
